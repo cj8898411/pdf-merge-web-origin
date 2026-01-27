@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>정산 PDF 취합</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div>
+          <div class="title">정산 PDF 취합</div>
+          <div class="subtitle">수입신고번호 기준 자동 분류 · 업무용</div>
+        </div>
+        <div class="top-actions">
+          <button class="ghost" id="settingsBtn" type="button">병합 순서 설정</button>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside class="sidebar">
+          <section class="panel folder-panel">
+            <div class="panel-title">폴더 리스트</div>
+            <div class="panel-desc">수입신고번호 기준</div>
+            <input
+              class="search"
+              id="folderSearch"
+              type="search"
+              placeholder="수입신고번호 검색"
+            />
+            <div class="folder-list" id="folderList"></div>
+          </section>
+
+          <section class="panel upload-panel" id="dropzone">
+            <input id="fileInput" type="file" accept="application/pdf" multiple />
+            <div class="panel-title">업로드</div>
+            <div class="panel-desc">PDF를 끌어놓거나 선택하세요</div>
+            <button class="primary" id="pickBtn" type="button">파일 선택</button>
+          </section>
+        </aside>
+        <div class="resizer" id="sidebarResizer" aria-hidden="true"></div>
+
+        <main class="main">
+          <section class="main-header">
+            <div>
+              <div class="main-title" id="selectedFolder">선택된 폴더 없음</div>
+              <div class="main-meta" id="folderMeta">파일 0 · 합계 0 B</div>
+            </div>
+            <div class="main-actions">
+              <button class="ghost" id="clearBtn" type="button">전체 초기화</button>
+              <button class="ghost" id="mergeAllBtn" type="button" disabled>
+                전체 병합 다운로드
+              </button>
+              <button class="primary" id="mergeBtn" type="button" disabled>
+                병합 다운로드
+              </button>
+            </div>
+          </section>
+
+          <section class="content-grid">
+            <div class="panel">
+              <div class="panel-title">파일 리스트</div>
+              <div class="panel-desc" id="listMeta">선택된 폴더의 파일 순서</div>
+              <ul class="file-list" id="fileList"></ul>
+            </div>
+
+            <div class="panel">
+              <div class="panel-title">파일 정보</div>
+              <div class="panel-desc">선택 항목 상세</div>
+              <div class="detail" id="fileDetail">
+                파일을 선택하면 정보가 표시됩니다.
+              </div>
+              <div class="status" id="status"></div>
+            </div>
+          </section>
+        </main>
+      </div>
+
+      <footer class="footer">
+        업로드 파일은 저장하지 않고 병합 후 즉시 다운로드됩니다.
+      </footer>
+    </div>
+
+    <div class="modal" id="settingsModal" aria-hidden="true">
+      <div class="modal-backdrop" data-close="true"></div>
+      <div class="modal-content" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <div>
+            <div class="panel-title">기본 병합 순서</div>
+            <div class="panel-desc">접두어 우선순위를 설정하세요</div>
+          </div>
+          <button class="ghost" id="closeSettings" type="button">닫기</button>
+        </div>
+
+        <div class="order-list" id="orderList"></div>
+        <div class="order-add">
+          <input id="newPrefix" type="text" placeholder="접두어 추가 (예: PC)" />
+          <button class="primary" id="addPrefix" type="button">추가</button>
+        </div>
+        <div class="modal-footer">
+          <button class="ghost" id="resetOrder" type="button">기본값 복원</button>
+          <button class="primary" id="saveOrder" type="button">저장</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
