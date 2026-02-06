@@ -10,7 +10,7 @@ pip install -r requirements.txt
 python server/app.py
 ```
 
-브라우저에서 http://localhost:3000 접속.
+브라우저에서 http://localhost:3100 접속.
 
 ## 기능
 - 다중 PDF 업로드

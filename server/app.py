@@ -20,9 +20,13 @@ MERGED_DIR.mkdir(parents=True, exist_ok=True)
 CUSTOMS_WITH_HYPHEN = re.compile(r"(\d{5})-(\d{2})-(\d{6})M(?!\d)", re.I)
 CUSTOMS_PLAIN = re.compile(r"(\d{13})M(?!\d)", re.I)
 BL_PREFIX = re.compile(r"(?:^|[ _-])BL[ _-]?([A-Z0-9]{6,20})(?=$|[ _-])", re.I)
+FEE_SECTION_START = re.compile(r"통\s*관\s*수\s*수\s*료|통관수수료")
+FEE_SECTION_END = re.compile(r"예\s*상\s*비\s*용|예상비용")
+IMPORTER_LINE = re.compile(r"(.+?)\s*귀하")
 
 DEFAULT_SETTINGS = {
     "prefixOrder": [
+        {"prefix": "JS", "documentName": "정산서"},
         {"prefix": "NB", "documentName": "납부영수증"},
         {"prefix": "VT", "documentName": "수입세금계산서"},
         {"prefix": "IMP", "documentName": "수입신고필증"},
@@ -110,6 +114,18 @@ def get_upload(filename):
     if UPLOAD_DIR not in target.parents or not target.exists() or not target.is_file():
         return jsonify({"error": "파일을 찾을 수 없습니다."}), 404
     return send_file(target, mimetype="application/pdf")
+
+
+@app.get("/pc-info/<path:filename>")
+def get_pc_info(filename):
+    target = (UPLOAD_DIR / filename).resolve()
+    if UPLOAD_DIR not in target.parents or not target.exists() or not target.is_file():
+        return jsonify({"error": "파일을 찾을 수 없습니다."}), 404
+    try:
+        info = _extract_pc_info(target)
+    except Exception:
+        return jsonify({"error": "PDF 정보를 읽지 못했습니다."}), 500
+    return jsonify(info)
 
 
 @app.get("/merged")
@@ -322,6 +338,75 @@ def _resolve_group_bl(ids, id_map) -> str:
         return list(unique)[0]
     return "미확인"
 
+def _normalize_line(line: str) -> str:
+    return re.sub(r"\s+", " ", line).strip()
+
+def _normalize_fee_name(name: str) -> str:
+    if not name:
+        return name
+    name = re.sub(r"\s+", " ", name).strip()
+    # Collapse spaces between Hangul syllables: "검 역 료" -> "검역료"
+    name = re.sub(r"(?<=[가-힣])\s+(?=[가-힣])", "", name)
+    return name
+
+def _extract_pdf_text(path: Path) -> str:
+    reader = PdfReader(str(path))
+    parts = []
+    for page in reader.pages:
+        parts.append(page.extract_text() or "")
+    return "\n".join(parts)
+
+def _extract_importer(lines: list[str]) -> str | None:
+    for line in lines:
+        match = IMPORTER_LINE.search(line)
+        if match:
+            return match.group(1).strip()
+    return None
+
+def _extract_fee_items(lines: list[str]) -> list[dict]:
+    start_idx = None
+    end_idx = None
+    for i, line in enumerate(lines):
+        if start_idx is None and FEE_SECTION_START.search(line):
+            start_idx = i + 1
+            continue
+        if start_idx is not None and FEE_SECTION_END.search(line):
+            end_idx = i
+            break
+    if start_idx is None:
+        return []
+    if end_idx is None:
+        end_idx = len(lines)
+
+    items = []
+    for raw in lines[start_idx:end_idx]:
+        line = _normalize_line(raw)
+        if not line:
+            continue
+        if re.search(r"미\s*수\s*금", line):
+            continue
+        match = re.match(r"(.+?)\s+([0-9,]+)(.*)$", line)
+        if match:
+            name = _normalize_fee_name(match.group(1))
+            amount = match.group(2).strip()
+            vendor = match.group(3).strip()
+            items.append({"name": name, "amount": amount, "vendor": vendor})
+        else:
+            items.append({"raw": line})
+    return items
+
+def _extract_pc_info(path: Path) -> dict:
+    text = _extract_pdf_text(path)
+    lines = []
+    for raw in text.splitlines():
+        cleaned = _normalize_line(raw)
+        if cleaned:
+            lines.append(cleaned)
+    return {
+        "importer": _extract_importer(lines),
+        "fees": _extract_fee_items(lines),
+    }
+
 
 @app.post("/merge-batch")
 def merge_batch():
@@ -389,4 +474,4 @@ def merge_batch():
 
 if __name__ == "__main__":
     # Use 0.0.0.0 for LAN testing, adjust as needed.
-    app.run(host="0.0.0.0", port=3000, debug=False)
+    app.run(host="0.0.0.0", port=3100, debug=False)

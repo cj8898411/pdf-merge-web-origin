@@ -126,7 +126,7 @@ LOG_DIR = os.path.join(ROOT, "logs")
 LOG_FILE = os.path.join(LOG_DIR, "server.log")
 PID_FILE = os.path.join(LOG_DIR, "server.pid")
 CMD_FILE = os.path.join(LOG_DIR, "server.cmdline.txt")
-SERVER_URL = os.environ.get("SERVER_URL", "http://127.0.0.1:3000")
+SERVER_URL = os.environ.get("SERVER_URL", "http://127.0.0.1:3100")
 
 proc = None
 log_handle = None
@@ -335,7 +335,7 @@ def start_server():
         _clear_pid()
     else:
         _kill_server_processes()
-        stopped_pid = _stop_port_process(3000)
+        stopped_pid = _stop_port_process(3100)
         if stopped_pid:
             _clear_pid()
 

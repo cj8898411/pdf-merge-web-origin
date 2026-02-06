@@ -46,6 +46,7 @@ const sidebarResizer = document.getElementById("sidebarResizer");
 const customsOnlyFirstToggle = document.getElementById("customsOnlyFirstToggle");
 
 const DEFAULT_ORDER = [
+  { prefix: "JS", documentName: "정산서" },
   { prefix: "NB", documentName: "납부영수증" },
   { prefix: "VT", documentName: "수입세금계산서" },
   { prefix: "IMP", documentName: "수입신고필증" },
@@ -81,6 +82,13 @@ const formatBytes = (bytes) => {
   const value = (bytes / Math.pow(1024, i)).toFixed(1);
   return `${value} ${units[i]}`;
 };
+
+const escapeHtml = (value) =>
+  String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;");
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
@@ -174,6 +182,23 @@ const getDocumentName = (prefix) => {
   return entry?.documentName || prefix;
 };
 
+const BASE_STATUS_ORDER = [
+  { prefix: "JS", label: "정산서" },
+  { prefix: "NB", label: "납부영수증" },
+  { prefix: "VT", label: "수입세금계산서" },
+  { prefix: "IMP", label: "수입신고필증" },
+];
+
+const buildStatusDots = (groupFiles) => {
+  const present = new Set(groupFiles.map((file) => file.prefix));
+  return BASE_STATUS_ORDER.map((entry) => {
+    const label = escapeHtml(entry.label);
+    const active = present.has(entry.prefix);
+    const cls = active ? "status-dot is-active" : "status-dot";
+    return `<span class="${cls}" title="${label}"></span>`;
+  }).join("");
+};
+
 const compareByPrefix = (a, b) => {
   const rankA = getFileOrderRank(a);
   const rankB = getFileOrderRank(b);
@@ -221,6 +246,15 @@ const getGroupBL = (groupFiles) => {
     return Array.from(blSet)[0];
   }
   return null;
+};
+
+const getGroupImporter = (groupFiles) => {
+  const importerSet = new Set(
+    groupFiles.map((file) => file.importer).filter((value) => Boolean(value))
+  );
+  if (!importerSet.size) return null;
+  if (importerSet.size === 1) return Array.from(importerSet)[0];
+  return "복수";
 };
 
 const persistPrefixOrder = () => {
@@ -437,6 +471,7 @@ const updateFolderList = () => {
     const normalizedKey = key.replace(/-/g, "");
     const normalizedSearch = keyword.replace(/-/g, "").toLowerCase();
     const groupBl = getGroupBL(groups[key]);
+    const groupImporter = getGroupImporter(groups[key]);
     const blSearch = groupBl ? groupBl.toLowerCase() : "";
     if (
       keyword &&
@@ -453,6 +488,10 @@ const updateFolderList = () => {
       /([0-9]{6}M)$/i,
       "<span class=\"folder-emphasis\">$1</span>"
     );
+    const metaParts = [];
+    if (groupImporter) metaParts.push(groupImporter);
+
+    const statusDots = buildStatusDots(groups[key]);
     item.innerHTML = `
       <div class="folder-item-row">
         <div class="folder-key">${emphasizedKey}</div>
@@ -463,7 +502,10 @@ const updateFolderList = () => {
           <span class="checkmark"></span>
         </label>
       </div>
-      <div class="folder-meta">${groupBl ? `${groupBl} · ` : ""}${groups[key].length} files</div>
+      <div class="folder-meta">${metaParts.join(" · ")}</div>
+      <div class="folder-status" aria-label="필수 서류 상태">
+        ${statusDots}
+      </div>
     `;
     const checkboxLabel = item.querySelector(".folder-checkbox");
     const checkbox = item.querySelector(".folder-complete");
@@ -628,13 +670,16 @@ const updateHeader = () => {
   const groupFiles = getGroupFiles(selectedGroupKey);
   const totalSize = groupFiles.reduce((sum, file) => sum + file.size, 0);
   const groupBl = getGroupBL(groupFiles);
+  const groupImporter = getGroupImporter(groupFiles);
   const emphasizedHeaderKey = selectedGroupKey.replace(
     /([0-9]{6}M)$/i,
     "<span class=\"folder-emphasis header-emphasis\">$1</span>"
   );
-  selectedFolder.innerHTML = groupBl
-    ? `${emphasizedHeaderKey} · ${groupBl}`
-    : emphasizedHeaderKey;
+  const headerParts = [];
+  if (groupImporter) headerParts.push(groupImporter);
+  headerParts.push(emphasizedHeaderKey);
+  if (groupBl) headerParts.push(groupBl);
+  selectedFolder.innerHTML = headerParts.join(" · ");
   folderMeta.textContent = `파일 ${groupFiles.length} · 합계 ${formatBytes(totalSize)}`;
   mergeBtn.disabled = groupFiles.length < 2;
   mergeAllBtn.disabled = files.length === 0 || pendingUploads > 0;

@@ -53,6 +53,8 @@ const clearAll = () => {
   setStatus("초기화했습니다.");
   clearUploadsOnServer();
   completedGroups = {};
+  pcInfoCache.clear();
+  pendingPcInfo.clear();
   persistCompletedGroups();
   updateUI();
 };
@@ -60,6 +62,44 @@ const clearAll = () => {
 let mergedFiles = [];
 let mergedTokens = [];
 let mergedFiltered = [];
+const pcInfoCache = new Map();
+const pendingPcInfo = new Set();
+
+const isPcFilename = (name) => /^PC_/i.test(name || "");
+
+const applyPcInfoToRecords = (filename, info) => {
+  files.forEach((record) => {
+    const key = record.uploadName || record.name;
+    if (key !== filename) return;
+    record.importer = info?.importer || null;
+    record.fees = Array.isArray(info?.fees) ? info.fees : [];
+  });
+};
+
+const fetchPcInfo = async (filename) => {
+  if (!filename || pendingPcInfo.has(filename)) return null;
+  if (pcInfoCache.has(filename)) return pcInfoCache.get(filename);
+  pendingPcInfo.add(filename);
+  try {
+    const response = await fetch(`/pc-info/${encodeURIComponent(filename)}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    pcInfoCache.set(filename, data);
+    return data;
+  } catch (err) {
+    return null;
+  } finally {
+    pendingPcInfo.delete(filename);
+  }
+};
+
+const requestPcInfoForFilename = async (filename) => {
+  if (!isPcFilename(filename)) return;
+  const info = await fetchPcInfo(filename);
+  if (!info) return;
+  applyPcInfoToRecords(filename, info);
+  updateUI();
+};
 
 const getSortedGroupKeys = () => {
   const groups = getGroups();
@@ -560,6 +600,9 @@ const uploadIncomingFiles = async (pdfs) => {
         const record = files.find((item) => item.file === file);
         if (record) {
           record.uploadName = savedName;
+          if (isPcFilename(savedName)) {
+            requestPcInfoForFilename(savedName);
+          }
         }
       });
     }
@@ -591,6 +634,11 @@ const loadStoredUploads = async () => {
     const restored = blobs.filter(Boolean);
     if (!restored.length) return;
     addFiles(restored, { skipUpload: true, savedNames: names });
+    names.forEach((name) => {
+      if (isPcFilename(name)) {
+        requestPcInfoForFilename(name);
+      }
+    });
     const keys = getSortedGroupKeys();
     if (keys.length) {
       selectedGroupKey = keys[0];
