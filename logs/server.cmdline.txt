@@ -1,0 +1,1 @@
+C:\Users\server\AppData\Local\Programs\Python\Python313\pythonw.EXE E:\pdf-merge-web\server\app.py
