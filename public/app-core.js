@@ -18,6 +18,7 @@ const zoomResetBtn = document.getElementById("zoomReset");
 const zoomLevelEl = document.getElementById("zoomLevel");
 const fileListPanel = document.getElementById("fileListPanel");
 const fileListAddBtn = document.getElementById("fileListAddBtn");
+const feeItemAddBtn = document.getElementById("feeItemAddBtn");
 
 const settingsToggle = document.getElementById("settingsToggle");
 const orderModal = document.getElementById("orderModal");
@@ -62,11 +63,19 @@ let customsOnlyFirst = true;
 let files = [];
 let selectedGroupKey = null;
 let groupOrderMap = {};
+let feeOrderMap = {};
+let feeHiddenMap = {};
+let listOrderMap = {};
+let feeManualMap = {};
+let feeOverrideMap = {};
 let selectedFileId = null;
+let selectedFeeKey = null;
 let fileCounter = 0;
 let previewUrl = null;
 let previewZoom = 1;
 let draggedFileId = null;
+let draggedFeeKey = null;
+let draggedItem = null;
 let pendingUploads = 0;
 
 const CUSTOMS_WITH_HYPHEN = /(\d{5})-(\d{2})-(\d{6})M(?!\d)/i;
@@ -197,6 +206,110 @@ const buildStatusDots = (groupFiles) => {
     const cls = active ? "status-dot is-active" : "status-dot";
     return `<span class="${cls}" title="${label}"></span>`;
   }).join("");
+};
+
+const normalizeFeeOrder = (groupKey, items) => {
+  const keys = items.map((item) => item.key);
+  let order = feeOrderMap[groupKey] || [];
+  order = order.filter((key) => keys.includes(key));
+  keys.forEach((key) => {
+    if (!order.includes(key)) order.push(key);
+  });
+  feeOrderMap[groupKey] = order;
+  return items.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+};
+
+const buildFeeItems = (groupKey, groupFiles) => {
+  const items = [];
+  const seen = new Set();
+  groupFiles.forEach((file) => {
+    const fees = Array.isArray(file.fees) ? file.fees : [];
+    fees.forEach((fee) => {
+      const name = fee?.name ? String(fee.name).trim() : "";
+      if (!name) return;
+      const amount = fee?.amount ? String(fee.amount).trim() : "";
+      const vendor = fee?.vendor ? String(fee.vendor).trim() : "";
+      const key = `${name}|${amount}|${vendor}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      items.push({ key, name, amount, vendor });
+    });
+  });
+  const manual = feeManualMap[groupKey] || [];
+  manual.forEach((item) => {
+    const name = item?.name ? String(item.name).trim() : "";
+    if (!name) return;
+    const amount = item?.amount ? String(item.amount).trim() : "";
+    const vendor = item?.vendor ? String(item.vendor).trim() : "";
+    const key = item?.key || `manual:${name}|${amount}|${vendor}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push({ key, name, amount, vendor, manual: true });
+  });
+  const hidden = feeHiddenMap[groupKey];
+  const visible = hidden
+    ? items.filter((item) => !hidden.has(item.key))
+    : items;
+  const overrides = feeOverrideMap[groupKey] || {};
+  const withOverrides = visible.map((item) => {
+    const override = overrides[item.key];
+    if (override) {
+      return { ...item, name: override };
+    }
+    return item;
+  });
+  return normalizeFeeOrder(groupKey, withOverrides);
+};
+
+const buildListOrder = (groupKey, groupFiles, feeItems) => {
+  const fileIds = getGroupIds(groupKey);
+  const feeKeys = feeItems.map((item) => item.key);
+  const tokens = [
+    ...fileIds.map((id) => `f:${id}`),
+    ...feeKeys.map((key) => `fee:${key}`),
+  ];
+  let order = listOrderMap[groupKey] || [];
+  order = order.filter((token) => tokens.includes(token));
+  tokens.forEach((token) => {
+    if (!order.includes(token)) order.push(token);
+  });
+  listOrderMap[groupKey] = order;
+  return order;
+};
+
+const syncFileOrderFromList = (groupKey) => {
+  const order = listOrderMap[groupKey] || [];
+  const ids = order
+    .filter((token) => token.startsWith("f:"))
+    .map((token) => token.slice(2));
+  if (ids.length) {
+    groupOrderMap[groupKey] = ids;
+  }
+};
+
+const reorderListTokens = (groupKey, fromToken, toToken) => {
+  if (!groupKey) return;
+  const order = listOrderMap[groupKey] || [];
+  const from = order.indexOf(fromToken);
+  const to = order.indexOf(toToken);
+  if (from === -1 || to === -1 || from === to) return;
+  const updated = [...order];
+  const [moved] = updated.splice(from, 1);
+  updated.splice(to, 0, moved);
+  listOrderMap[groupKey] = updated;
+  syncFileOrderFromList(groupKey);
+};
+
+const assignFeeToFile = (groupFiles, fileId, feeKey) => {
+  groupFiles.forEach((file) => {
+    if (file.feeKey === feeKey) {
+      file.feeKey = null;
+    }
+  });
+  const target = groupFiles.find((file) => file.id === fileId);
+  if (target) {
+    target.feeKey = feeKey;
+  }
 };
 
 const compareByPrefix = (a, b) => {
@@ -367,6 +480,7 @@ const addFiles = (incoming, options = {}) => {
     selectedGroupKey = newRecords[0].groupKey;
   }
   updateUI();
+  return newRecords;
 };
 
 const insertIntoGroupOrder = (newRecords) => {
@@ -406,6 +520,7 @@ const getGroupFiles = (groupKey) =>
   getGroupIds(groupKey).map((id) => files.find((f) => f.id === id));
 
 const setSelectedFile = (fileId) => {
+  selectedFeeKey = null;
   selectedFileId = fileId;
   const file = files.find((f) => f.id === fileId);
   if (!file) {
@@ -492,6 +607,14 @@ const updateFolderList = () => {
     if (groupImporter) metaParts.push(groupImporter);
 
     const statusDots = buildStatusDots(groups[key]);
+    const metaLine = metaParts.length
+      ? `<div class="folder-meta">${metaParts.join(" · ")}</div>`
+      : "";
+    if (!metaParts.length) {
+      item.classList.add("compact");
+    } else {
+      item.classList.remove("compact");
+    }
     item.innerHTML = `
       <div class="folder-item-row">
         <div class="folder-key">${emphasizedKey}</div>
@@ -502,7 +625,7 @@ const updateFolderList = () => {
           <span class="checkmark"></span>
         </label>
       </div>
-      <div class="folder-meta">${metaParts.join(" · ")}</div>
+      ${metaLine}
       <div class="folder-status" aria-label="필수 서류 상태">
         ${statusDots}
       </div>
@@ -565,84 +688,252 @@ const updateFileList = () => {
 
   const groupFiles = getGroupFiles(selectedGroupKey);
   listMeta.textContent = `${groupFiles.length} files`;
-
-  groupFiles.forEach((file, index) => {
-    const li = document.createElement("li");
-    li.className = `file-item ${file.id === selectedFileId ? "active" : ""}`;
-    li.draggable = true;
-    li.dataset.fileId = file.id;
-
-    const info = document.createElement("div");
-    info.className = "file-info";
-
-    const name = document.createElement("div");
-    name.className = "file-name";
-    name.textContent = `${index + 1}. ${file.name}`;
-
-    const meta = document.createElement("div");
-    meta.className = "file-meta";
-    meta.textContent = `${getDocumentName(file.prefix)} · ${formatBytes(
-      file.size
-    )}`;
-
-    info.appendChild(name);
-    info.appendChild(meta);
-
-    const actions = document.createElement("div");
-    actions.className = "file-actions";
-
-    const upBtn = document.createElement("button");
-    upBtn.textContent = "↑";
-    upBtn.disabled = index === 0;
-    upBtn.addEventListener("click", () => moveFile(index, -1));
-
-    const downBtn = document.createElement("button");
-    downBtn.textContent = "↓";
-    downBtn.disabled = index === groupFiles.length - 1;
-    downBtn.addEventListener("click", () => moveFile(index, 1));
-
-    const removeBtn = document.createElement("button");
-    removeBtn.textContent = "삭제";
-    removeBtn.addEventListener("click", () => removeFile(file.id));
-
-    actions.appendChild(upBtn);
-    actions.appendChild(downBtn);
-    actions.appendChild(removeBtn);
-
-    li.appendChild(info);
-    li.appendChild(actions);
-    li.addEventListener("click", () => {
-      setSelectedFile(file.id);
-      updateFileList();
-    });
-    li.addEventListener("dragstart", (event) => {
-      draggedFileId = file.id;
-      li.classList.add("dragging");
-      event.dataTransfer.effectAllowed = "move";
-    });
-    li.addEventListener("dragend", () => {
-      draggedFileId = null;
-      li.classList.remove("dragging");
-      fileList.querySelectorAll(".drag-over").forEach((node) => {
-        node.classList.remove("drag-over");
-      });
-    });
-    li.addEventListener("dragover", (event) => {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-      li.classList.add("drag-over");
-    });
-    li.addEventListener("dragleave", () => {
-      li.classList.remove("drag-over");
-    });
-    li.addEventListener("drop", (event) => {
-      event.preventDefault();
-      li.classList.remove("drag-over");
-      if (!draggedFileId || draggedFileId === file.id) return;
-      reorderWithinGroup(draggedFileId, file.id);
-    });
-    fileList.appendChild(li);
+  groupFiles.forEach((file) => {
+    const key = file.uploadName || file.name;
+    if (typeof window.isPcFilename === "function" && window.isPcFilename(key)) {
+      const missingFees =
+        !Array.isArray(file.fees) ||
+        !file.fees.some((fee) => fee && fee.name === "통관수수료");
+      if (missingFees) {
+        if (typeof window.requestPcInfoForFilename === "function") {
+          window.requestPcInfoForFilename(key, { force: true });
+        }
+      }
+    }
   });
+
+  const feeItems = buildFeeItems(selectedGroupKey, groupFiles);
+  const listOrder = buildListOrder(selectedGroupKey, groupFiles, feeItems);
+  syncFileOrderFromList(selectedGroupKey);
+  const fileMap = new Map(groupFiles.map((file) => [file.id, file]));
+  const feeMap = new Map(feeItems.map((fee) => [fee.key, fee]));
+
+  listOrder.forEach((token, index) => {
+    if (token.startsWith("f:")) {
+      const id = token.slice(2);
+      const file = fileMap.get(id);
+      if (!file) return;
+
+      const li = document.createElement("li");
+      li.className = `file-item ${file.id === selectedFileId ? "active" : ""}`;
+      li.draggable = true;
+      li.dataset.fileId = file.id;
+      li.dataset.itemToken = token;
+
+      const info = document.createElement("div");
+      info.className = "file-info";
+
+      const name = document.createElement("div");
+      name.className = "file-name";
+      name.textContent = `${index + 1}. ${file.name}`;
+
+      const meta = document.createElement("div");
+      meta.className = "file-meta";
+      meta.textContent = `${getDocumentName(file.prefix)} · ${formatBytes(
+        file.size
+      )}`;
+
+      info.appendChild(name);
+      info.appendChild(meta);
+
+      const actions = document.createElement("div");
+      actions.className = "file-actions";
+
+      const removeBtn = document.createElement("button");
+      removeBtn.textContent = "삭제";
+      removeBtn.addEventListener("click", () => removeFile(file.id));
+
+      actions.appendChild(removeBtn);
+
+      li.appendChild(info);
+      li.appendChild(actions);
+      li.addEventListener("click", () => {
+        setSelectedFile(file.id);
+        updateFileList();
+      });
+      li.addEventListener("dragstart", (event) => {
+        draggedFileId = file.id;
+        draggedItem = { type: "file", token };
+        li.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+      });
+      li.addEventListener("dragend", () => {
+        draggedFileId = null;
+        draggedItem = null;
+        li.classList.remove("dragging");
+        fileList.querySelectorAll(".drag-over").forEach((node) => {
+          node.classList.remove("drag-over");
+        });
+      });
+      li.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        li.classList.add("drag-over");
+      });
+      li.addEventListener("dragleave", () => {
+        li.classList.remove("drag-over");
+      });
+      li.addEventListener("drop", (event) => {
+        event.preventDefault();
+        li.classList.remove("drag-over");
+        if (!draggedItem) return;
+        if (draggedItem.token === token) return;
+        reorderListTokens(selectedGroupKey, draggedItem.token, token);
+        updateUI();
+      });
+      fileList.appendChild(li);
+      return;
+    }
+
+    if (token.startsWith("fee:")) {
+      const key = token.slice(4);
+      const fee = feeMap.get(key);
+      if (!fee) return;
+
+      const li = document.createElement("li");
+      li.className = `file-item fee-item ${fee.key === selectedFeeKey ? "active" : ""}`;
+      li.dataset.feeKey = fee.key;
+      li.dataset.itemToken = token;
+      li.draggable = true;
+
+      const info = document.createElement("div");
+      info.className = "file-info";
+
+      const name = document.createElement("div");
+      name.className = "file-name";
+      name.textContent = `${index + 1}. ${fee.name}`;
+
+      const meta = document.createElement("div");
+      meta.className = "file-meta";
+      const vendorText = fee.vendor ? ` · ${fee.vendor}` : "";
+      meta.textContent = `${fee.amount}${vendorText}`.trim();
+
+      info.appendChild(name);
+      info.appendChild(meta);
+
+      const assigned = groupFiles.find((file) => file.feeKey === fee.key);
+      if (assigned) {
+        li.classList.add("is-filled");
+        name.textContent = `${index + 1}. ${assigned.name}`;
+        meta.textContent = `${fee.name} ${fee.amount}`.trim();
+        const vendorTextFilled = fee.vendor ? ` ${fee.vendor}` : "";
+        if (vendorTextFilled) {
+          meta.textContent = `${meta.textContent}${vendorTextFilled}`.trim();
+        }
+      }
+
+      li.appendChild(info);
+
+      const actions = document.createElement("div");
+      actions.className = "file-actions";
+
+      const editBtn = document.createElement("button");
+      editBtn.textContent = "수정";
+      editBtn.addEventListener("click", () => {
+        const nextName = window.prompt("항목명을 수정하세요.", fee.name || "");
+        if (!nextName) return;
+        const trimmed = nextName.trim();
+        if (!trimmed) return;
+        if (fee.manual) {
+          const manual = feeManualMap[selectedGroupKey] || [];
+          const target = manual.find((item) => item.key === fee.key);
+          if (target) {
+            target.name = trimmed;
+          }
+        } else {
+          if (!feeOverrideMap[selectedGroupKey]) feeOverrideMap[selectedGroupKey] = {};
+          feeOverrideMap[selectedGroupKey][fee.key] = trimmed;
+        }
+        updateUI();
+      });
+
+      const removeBtn = document.createElement("button");
+      removeBtn.textContent = "삭제";
+      removeBtn.addEventListener("click", () => {
+        const hidden = feeHiddenMap[selectedGroupKey] || new Set();
+        hidden.add(fee.key);
+        feeHiddenMap[selectedGroupKey] = hidden;
+        const manual = feeManualMap[selectedGroupKey] || [];
+        feeManualMap[selectedGroupKey] = manual.filter((item) => item.key !== fee.key);
+        groupFiles.forEach((file) => {
+          if (file.feeKey === fee.key) file.feeKey = null;
+        });
+        const order = listOrderMap[selectedGroupKey] || [];
+        listOrderMap[selectedGroupKey] = order.filter((entry) => entry !== token);
+        syncFileOrderFromList(selectedGroupKey);
+        updateUI();
+      });
+
+      actions.appendChild(editBtn);
+      actions.appendChild(removeBtn);
+      li.appendChild(actions);
+
+      li.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        li.classList.add("drag-over");
+      });
+      li.addEventListener("dragleave", () => {
+        li.classList.remove("drag-over");
+      });
+      li.addEventListener("click", () => {
+        setSelectedFee(fee.key);
+        updateFileList();
+      });
+
+      li.addEventListener("drop", (event) => {
+        event.preventDefault();
+        li.classList.remove("drag-over");
+        if (draggedItem) {
+          if (draggedItem.token === token) return;
+          reorderListTokens(selectedGroupKey, draggedItem.token, token);
+          updateUI();
+          return;
+        }
+        const incoming = event.dataTransfer?.files || [];
+        if (!incoming.length) return;
+        const newRecords = addFiles(incoming, { targetGroupKey: selectedGroupKey });
+        if (newRecords && newRecords.length) {
+          groupFiles.forEach((file) => {
+            if (file.feeKey === fee.key) file.feeKey = null;
+          });
+          newRecords[0].feeKey = fee.key;
+          updateUI();
+        }
+      });
+
+      li.addEventListener("dragstart", (event) => {
+        draggedFeeKey = fee.key;
+        draggedItem = { type: "fee", token };
+        draggedFileId = null;
+        li.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+      });
+      li.addEventListener("dragend", () => {
+        draggedFeeKey = null;
+        draggedItem = null;
+        li.classList.remove("dragging");
+        fileList.querySelectorAll(".drag-over").forEach((node) => {
+          node.classList.remove("drag-over");
+        });
+      });
+
+      fileList.appendChild(li);
+    }
+  });
+};
+
+const setSelectedFee = (feeKey) => {
+  selectedFeeKey = feeKey;
+  selectedFileId = null;
+  if (previewUrl) {
+    URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+  }
+  previewZoom = 1;
+  updateZoomUI();
+  fileDetail.classList.remove("is-preview");
+  fileDetail.textContent = "정산 항목이 선택되었습니다.";
 };
 
 const reorderWithinGroup = (sourceId, targetId) => {
@@ -675,8 +966,11 @@ const updateHeader = () => {
     /([0-9]{6}M)$/i,
     "<span class=\"folder-emphasis header-emphasis\">$1</span>"
   );
+  const emphasizedImporter = groupImporter
+    ? `<span class="folder-emphasis header-emphasis">${groupImporter}</span>`
+    : null;
   const headerParts = [];
-  if (groupImporter) headerParts.push(groupImporter);
+  if (emphasizedImporter) headerParts.push(emphasizedImporter);
   headerParts.push(emphasizedHeaderKey);
   if (groupBl) headerParts.push(groupBl);
   selectedFolder.innerHTML = headerParts.join(" · ");

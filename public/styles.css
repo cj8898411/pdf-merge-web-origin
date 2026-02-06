@@ -190,6 +190,11 @@ body {
   align-content: center;
 }
 
+.folder-item.compact {
+  height: 53px;
+  grid-template-rows: 1fr 1fr;
+}
+
 .folder-key,
 .folder-meta {
   white-space: nowrap;
@@ -530,6 +535,7 @@ body {
 .file-list-footer {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   margin-top: auto;
   padding-top: 6px;
 }
@@ -563,11 +569,30 @@ body {
   background: #eef4ff;
 }
 
+.file-item.fee-item {
+  grid-template-columns: 1fr auto;
+  background: #f6f8fb;
+}
+
+.file-item.fee-item.is-filled {
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.file-item.fee-item .file-name {
+  font-weight: 600;
+}
+
 .file-item.active {
   border-color: var(--primary);
   background: #edf4ff;
-  height: 60px;
+  height: auto;
   align-items: start;
+}
+
+.file-item.fee-item.active {
+  border-color: var(--primary);
+  background: #edf4ff;
 }
 
 .file-info {
@@ -582,6 +607,11 @@ body {
 
 .file-meta {
   font-size: 11px;
+  color: var(--muted);
+}
+
+.file-fees {
+  font-size: 10.5px;
   color: var(--muted);
 }
 

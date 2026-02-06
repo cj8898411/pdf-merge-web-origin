@@ -20,7 +20,7 @@ MERGED_DIR.mkdir(parents=True, exist_ok=True)
 CUSTOMS_WITH_HYPHEN = re.compile(r"(\d{5})-(\d{2})-(\d{6})M(?!\d)", re.I)
 CUSTOMS_PLAIN = re.compile(r"(\d{13})M(?!\d)", re.I)
 BL_PREFIX = re.compile(r"(?:^|[ _-])BL[ _-]?([A-Z0-9]{6,20})(?=$|[ _-])", re.I)
-FEE_SECTION_START = re.compile(r"통\s*관\s*수\s*수\s*료|통관수수료")
+FEE_SECTION_START = re.compile(r"소\s*계|소계")
 FEE_SECTION_END = re.compile(r"예\s*상\s*비\s*용|예상비용")
 IMPORTER_LINE = re.compile(r"(.+?)\s*귀하")
 
@@ -389,8 +389,11 @@ def _extract_fee_items(lines: list[str]) -> list[dict]:
         if match:
             name = _normalize_fee_name(match.group(1))
             amount = match.group(2).strip()
-            vendor = match.group(3).strip()
-            items.append({"name": name, "amount": amount, "vendor": vendor})
+            vendor = re.sub(r"\s+", "", match.group(3))
+            item = {"name": name, "amount": amount}
+            if vendor:
+                item["vendor"] = vendor
+            items.append(item)
         else:
             items.append({"raw": line})
     return items

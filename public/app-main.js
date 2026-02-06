@@ -53,6 +53,11 @@ const clearAll = () => {
   setStatus("초기화했습니다.");
   clearUploadsOnServer();
   completedGroups = {};
+  feeOrderMap = {};
+  feeHiddenMap = {};
+  listOrderMap = {};
+  feeManualMap = {};
+  feeOverrideMap = {};
   pcInfoCache.clear();
   pendingPcInfo.clear();
   persistCompletedGroups();
@@ -64,6 +69,8 @@ let mergedTokens = [];
 let mergedFiltered = [];
 const pcInfoCache = new Map();
 const pendingPcInfo = new Set();
+const refreshedPcInfo = new Set();
+const PC_INFO_VERSION = 2;
 
 const isPcFilename = (name) => /^PC_/i.test(name || "");
 
@@ -76,15 +83,19 @@ const applyPcInfoToRecords = (filename, info) => {
   });
 };
 
-const fetchPcInfo = async (filename) => {
+const fetchPcInfo = async (filename, options = {}) => {
+  const force = Boolean(options.force);
   if (!filename || pendingPcInfo.has(filename)) return null;
-  if (pcInfoCache.has(filename)) return pcInfoCache.get(filename);
+  const cacheKey = `${filename}::${PC_INFO_VERSION}`;
+  if (!force && pcInfoCache.has(cacheKey)) return pcInfoCache.get(cacheKey);
   pendingPcInfo.add(filename);
   try {
-    const response = await fetch(`/pc-info/${encodeURIComponent(filename)}`);
+    const response = await fetch(
+      `/pc-info/${encodeURIComponent(filename)}?v=${PC_INFO_VERSION}`
+    );
     if (!response.ok) return null;
     const data = await response.json();
-    pcInfoCache.set(filename, data);
+    pcInfoCache.set(cacheKey, data);
     return data;
   } catch (err) {
     return null;
@@ -93,13 +104,21 @@ const fetchPcInfo = async (filename) => {
   }
 };
 
-const requestPcInfoForFilename = async (filename) => {
+const requestPcInfoForFilename = async (filename, options = {}) => {
+  const force = Boolean(options.force);
   if (!isPcFilename(filename)) return;
-  const info = await fetchPcInfo(filename);
+  if (force) {
+    if (refreshedPcInfo.has(filename)) return;
+    refreshedPcInfo.add(filename);
+  }
+  const info = await fetchPcInfo(filename, { force });
   if (!info) return;
   applyPcInfoToRecords(filename, info);
   updateUI();
 };
+
+window.requestPcInfoForFilename = requestPcInfoForFilename;
+window.isPcFilename = isPcFilename;
 
 const getSortedGroupKeys = () => {
   const groups = getGroups();
@@ -818,12 +837,33 @@ const initResizer = () => {
 };
 
 let pendingTargetGroupKey = null;
+const createManualFeeItem = () => {
+  if (!selectedGroupKey) return;
+  const name = window.prompt("항목명을 입력하세요.");
+  if (!name) return;
+  const entry = {
+    key: `manual:${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    name: name.trim(),
+    amount: "",
+    vendor: "",
+  };
+  if (!feeManualMap[selectedGroupKey]) feeManualMap[selectedGroupKey] = [];
+  feeManualMap[selectedGroupKey].push(entry);
+  updateUI();
+};
+
+window.createManualFeeItem = createManualFeeItem;
 
 pickBtn.addEventListener("click", () => fileInput.click());
 if (fileListAddBtn) {
   fileListAddBtn.addEventListener("click", () => {
     pendingTargetGroupKey = selectedGroupKey;
     fileInput.click();
+  });
+}
+if (feeItemAddBtn) {
+  feeItemAddBtn.addEventListener("click", () => {
+    createManualFeeItem();
   });
 }
 fileInput.addEventListener("change", (e) => {
