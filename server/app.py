@@ -33,6 +33,12 @@ DEFAULT_SETTINGS = {
     ],
     "customsOnlyFirst": True,
     "completedGroups": {},
+    "feeOrderMap": {},
+    "feeHiddenMap": {},
+    "feeManualMap": {},
+    "feeOverrideMap": {},
+    "listOrderMap": {},
+    "feeAttachmentMap": {},
 }
 
 
@@ -56,6 +62,18 @@ def _load_settings() -> dict:
             settings["customsOnlyFirst"] = data["customsOnlyFirst"]
         if isinstance(data.get("completedGroups"), dict):
             settings["completedGroups"] = data["completedGroups"]
+        if isinstance(data.get("feeOrderMap"), dict):
+            settings["feeOrderMap"] = data["feeOrderMap"]
+        if isinstance(data.get("feeHiddenMap"), dict):
+            settings["feeHiddenMap"] = data["feeHiddenMap"]
+        if isinstance(data.get("feeManualMap"), dict):
+            settings["feeManualMap"] = data["feeManualMap"]
+        if isinstance(data.get("feeOverrideMap"), dict):
+            settings["feeOverrideMap"] = data["feeOverrideMap"]
+        if isinstance(data.get("listOrderMap"), dict):
+            settings["listOrderMap"] = data["listOrderMap"]
+        if isinstance(data.get("feeAttachmentMap"), dict):
+            settings["feeAttachmentMap"] = data["feeAttachmentMap"]
     return settings
 
 
@@ -82,6 +100,18 @@ def update_settings():
         settings["customsOnlyFirst"] = data["customsOnlyFirst"]
     if isinstance(data.get("completedGroups"), dict):
         settings["completedGroups"] = data["completedGroups"]
+    if isinstance(data.get("feeOrderMap"), dict):
+        settings["feeOrderMap"] = data["feeOrderMap"]
+    if isinstance(data.get("feeHiddenMap"), dict):
+        settings["feeHiddenMap"] = data["feeHiddenMap"]
+    if isinstance(data.get("feeManualMap"), dict):
+        settings["feeManualMap"] = data["feeManualMap"]
+    if isinstance(data.get("feeOverrideMap"), dict):
+        settings["feeOverrideMap"] = data["feeOverrideMap"]
+    if isinstance(data.get("listOrderMap"), dict):
+        settings["listOrderMap"] = data["listOrderMap"]
+    if isinstance(data.get("feeAttachmentMap"), dict):
+        settings["feeAttachmentMap"] = data["feeAttachmentMap"]
     _save_settings(settings)
     return jsonify(settings)
 

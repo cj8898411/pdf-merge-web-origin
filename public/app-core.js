@@ -68,6 +68,7 @@ let feeHiddenMap = {};
 let listOrderMap = {};
 let feeManualMap = {};
 let feeOverrideMap = {};
+let feeAttachmentMap = {};
 let selectedFileId = null;
 let selectedFeeKey = null;
 let fileCounter = 0;
@@ -198,14 +199,33 @@ const BASE_STATUS_ORDER = [
   { prefix: "IMP", label: "수입신고필증" },
 ];
 
-const buildStatusDots = (groupFiles) => {
-  const present = new Set(groupFiles.map((file) => file.prefix));
-  return BASE_STATUS_ORDER.map((entry) => {
-    const label = escapeHtml(entry.label);
-    const active = present.has(entry.prefix);
-    const cls = active ? "status-dot is-active" : "status-dot";
-    return `<span class="${cls}" title="${label}"></span>`;
-  }).join("");
+const buildStatusDots = (groupKey, groupFiles) => {
+  const feeItems = buildFeeItems(groupKey, groupFiles);
+  const listOrder = buildListOrder(groupKey, groupFiles, feeItems);
+  const feeMap = new Map(feeItems.map((fee) => [fee.key, fee]));
+  const fileMap = new Map(groupFiles.map((file) => [file.id, file]));
+
+  return listOrder
+    .map((token) => {
+      if (token.startsWith("fee:")) {
+        const key = token.slice(4);
+        const fee = feeMap.get(key);
+        if (!fee) return "";
+        const label = escapeHtml(fee.name);
+        const attached = groupFiles.some((file) => file.feeKey === fee.key);
+        const cls = attached ? "status-dot is-active" : "status-dot";
+        return `<span class="status-dot-wrap" title="${label}"><span class="${cls}"></span></span>`;
+      }
+      if (token.startsWith("f:")) {
+        const id = token.slice(2);
+        const file = fileMap.get(id);
+        if (!file) return "";
+        const label = escapeHtml(getDocumentName(file.prefix) || file.name);
+        return `<span class="status-dot-wrap" title="${label}"><span class="status-dot is-active"></span></span>`;
+      }
+      return "";
+    })
+    .join("");
 };
 
 const normalizeFeeOrder = (groupKey, items) => {
@@ -215,6 +235,9 @@ const normalizeFeeOrder = (groupKey, items) => {
   keys.forEach((key) => {
     if (!order.includes(key)) order.push(key);
   });
+  if (keys.includes("default:js")) {
+    order = ["default:js", ...order.filter((key) => key !== "default:js")];
+  }
   feeOrderMap[groupKey] = order;
   return items.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
 };
@@ -246,6 +269,16 @@ const buildFeeItems = (groupKey, groupFiles) => {
     seen.add(key);
     items.push({ key, name, amount, vendor, manual: true });
   });
+  const hasDefault = items.some((item) => item.key === "default:js");
+  if (!hasDefault) {
+    items.push({
+      key: "default:js",
+      name: "정산서",
+      amount: "",
+      vendor: "",
+      default: true,
+    });
+  }
   const hidden = feeHiddenMap[groupKey];
   const visible = hidden
     ? items.filter((item) => !hidden.has(item.key))
@@ -273,6 +306,9 @@ const buildListOrder = (groupKey, groupFiles, feeItems) => {
   tokens.forEach((token) => {
     if (!order.includes(token)) order.push(token);
   });
+  if (tokens.includes("fee:default:js")) {
+    order = ["fee:default:js", ...order.filter((token) => token !== "fee:default:js")];
+  }
   listOrderMap[groupKey] = order;
   return order;
 };
@@ -298,6 +334,7 @@ const reorderListTokens = (groupKey, fromToken, toToken) => {
   updated.splice(to, 0, moved);
   listOrderMap[groupKey] = updated;
   syncFileOrderFromList(groupKey);
+  persistFeeState();
 };
 
 const assignFeeToFile = (groupFiles, fileId, feeKey) => {
@@ -309,6 +346,16 @@ const assignFeeToFile = (groupFiles, fileId, feeKey) => {
   const target = groupFiles.find((file) => file.id === fileId);
   if (target) {
     target.feeKey = feeKey;
+  }
+  if (selectedGroupKey) {
+    if (!feeAttachmentMap[selectedGroupKey]) feeAttachmentMap[selectedGroupKey] = {};
+    const attachments = feeAttachmentMap[selectedGroupKey];
+    Object.keys(attachments).forEach((name) => {
+      if (attachments[name] === feeKey) delete attachments[name];
+    });
+    const name = target?.uploadName || target?.name;
+    if (name) attachments[name] = feeKey;
+    persistFeeState();
   }
 };
 
@@ -388,6 +435,31 @@ const persistCompletedGroups = () => {
   }
 };
 
+const persistFeeState = () => {
+  if (typeof window.requestSaveSharedSettings === "function") {
+    window.requestSaveSharedSettings();
+    return;
+  }
+  if (typeof window.saveSharedSettings === "function") {
+    window.saveSharedSettings();
+  }
+};
+
+const applyFeeAttachments = (groupKey, groupFiles, feeItems) => {
+  if (!groupKey) return;
+  const attachments = feeAttachmentMap[groupKey] || {};
+  const feeKeys = new Set(feeItems.map((item) => item.key));
+  groupFiles.forEach((file) => {
+    const key = file.uploadName || file.name;
+    const mapped = attachments[key];
+    if (mapped && feeKeys.has(mapped)) {
+      file.feeKey = mapped;
+    } else {
+      file.feeKey = null;
+    }
+  });
+};
+
 const applySharedSettings = (data) => {
   if (!data || typeof data !== "object") return;
   if (Array.isArray(data.prefixOrder)) {
@@ -403,6 +475,28 @@ const applySharedSettings = (data) => {
   }
   if (data.completedGroups && typeof data.completedGroups === "object") {
     completedGroups = data.completedGroups;
+  }
+  if (data.feeOrderMap && typeof data.feeOrderMap === "object") {
+    feeOrderMap = data.feeOrderMap;
+  }
+  if (data.feeHiddenMap && typeof data.feeHiddenMap === "object") {
+    const restored = {};
+    Object.entries(data.feeHiddenMap).forEach(([key, value]) => {
+      if (Array.isArray(value)) restored[key] = new Set(value);
+    });
+    feeHiddenMap = restored;
+  }
+  if (data.feeManualMap && typeof data.feeManualMap === "object") {
+    feeManualMap = data.feeManualMap;
+  }
+  if (data.feeOverrideMap && typeof data.feeOverrideMap === "object") {
+    feeOverrideMap = data.feeOverrideMap;
+  }
+  if (data.listOrderMap && typeof data.listOrderMap === "object") {
+    listOrderMap = data.listOrderMap;
+  }
+  if (data.feeAttachmentMap && typeof data.feeAttachmentMap === "object") {
+    feeAttachmentMap = data.feeAttachmentMap;
   }
 };
 
@@ -480,6 +574,13 @@ const addFiles = (incoming, options = {}) => {
     selectedGroupKey = newRecords[0].groupKey;
   }
   updateUI();
+  if (options.releaseFiles) {
+    newRecords.forEach((record) => {
+      if (record.file) {
+        record.file = null;
+      }
+    });
+  }
   return newRecords;
 };
 
@@ -538,7 +639,13 @@ const setSelectedFile = (fileId) => {
     URL.revokeObjectURL(previewUrl);
     previewUrl = null;
   }
-  previewUrl = URL.createObjectURL(file.file);
+  if (file.file) {
+    previewUrl = URL.createObjectURL(file.file);
+  } else if (file.uploadName) {
+    previewUrl = `/uploads/${encodeURIComponent(file.uploadName)}`;
+  } else {
+    previewUrl = null;
+  }
   previewZoom = 1;
   updateZoomUI();
   fileDetail.classList.add("is-preview");
@@ -606,7 +713,7 @@ const updateFolderList = () => {
     const metaParts = [];
     if (groupImporter) metaParts.push(groupImporter);
 
-    const statusDots = buildStatusDots(groups[key]);
+    const statusDots = buildStatusDots(key, groups[key]);
     const metaLine = metaParts.length
       ? `<div class="folder-meta">${metaParts.join(" · ")}</div>`
       : "";
@@ -703,6 +810,7 @@ const updateFileList = () => {
   });
 
   const feeItems = buildFeeItems(selectedGroupKey, groupFiles);
+  applyFeeAttachments(selectedGroupKey, groupFiles, feeItems);
   const listOrder = buildListOrder(selectedGroupKey, groupFiles, feeItems);
   syncFileOrderFromList(selectedGroupKey);
   const fileMap = new Map(groupFiles.map((file) => [file.id, file]));
@@ -827,6 +935,20 @@ const updateFileList = () => {
       const actions = document.createElement("div");
       actions.className = "file-actions";
 
+      const addBtn = document.createElement("button");
+      addBtn.textContent = "추가";
+      addBtn.addEventListener("click", () => {
+        if (!selectedGroupKey) return;
+        if (typeof window.addFiles === "function") {
+          window.addFiles([], { targetGroupKey: selectedGroupKey });
+        }
+        if (fileInput) {
+          fileInput.dataset.targetFeeKey = fee.key;
+          fileInput.dataset.targetGroupKey = selectedGroupKey;
+          fileInput.click();
+        }
+      });
+
       const editBtn = document.createElement("button");
       editBtn.textContent = "수정";
       editBtn.addEventListener("click", () => {
@@ -844,6 +966,7 @@ const updateFileList = () => {
           if (!feeOverrideMap[selectedGroupKey]) feeOverrideMap[selectedGroupKey] = {};
           feeOverrideMap[selectedGroupKey][fee.key] = trimmed;
         }
+        persistFeeState();
         updateUI();
       });
 
@@ -861,9 +984,13 @@ const updateFileList = () => {
         const order = listOrderMap[selectedGroupKey] || [];
         listOrderMap[selectedGroupKey] = order.filter((entry) => entry !== token);
         syncFileOrderFromList(selectedGroupKey);
+        persistFeeState();
         updateUI();
       });
 
+      if (!assigned) {
+        actions.appendChild(addBtn);
+      }
       actions.appendChild(editBtn);
       actions.appendChild(removeBtn);
       li.appendChild(actions);

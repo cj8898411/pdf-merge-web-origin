@@ -36,6 +36,12 @@ const removeFile = (fileId) => {
   updateUI();
   if (target) {
     const serverName = target.uploadName || target.name;
+    if (target.groupKey && feeAttachmentMap[target.groupKey]) {
+      delete feeAttachmentMap[target.groupKey][serverName];
+      if (typeof window.saveSharedSettings === "function") {
+        window.saveSharedSettings();
+      }
+    }
     deleteUploadsOnServer([serverName]);
   }
 };
@@ -58,6 +64,7 @@ const clearAll = () => {
   listOrderMap = {};
   feeManualMap = {};
   feeOverrideMap = {};
+  feeAttachmentMap = {};
   pcInfoCache.clear();
   pendingPcInfo.clear();
   persistCompletedGroups();
@@ -618,12 +625,24 @@ const uploadIncomingFiles = async (pdfs) => {
         const file = pdfs[index];
         const record = files.find((item) => item.file === file);
         if (record) {
+          const oldName = record.uploadName || record.name;
           record.uploadName = savedName;
+          record.file = null;
           if (isPcFilename(savedName)) {
             requestPcInfoForFilename(savedName);
           }
+          if (record.groupKey && feeAttachmentMap[record.groupKey]) {
+            const attachments = feeAttachmentMap[record.groupKey];
+            if (attachments[oldName]) {
+              attachments[savedName] = attachments[oldName];
+              delete attachments[oldName];
+            }
+          }
         }
       });
+      if (typeof window.saveSharedSettings === "function") {
+        window.saveSharedSettings();
+      }
     }
   } catch (err) {
     // Ignore upload failures to avoid blocking UI.
@@ -642,17 +661,14 @@ const loadStoredUploads = async () => {
     const names = Array.isArray(data.uploads) ? data.uploads : [];
     if (!names.length) return;
 
-    const blobs = await Promise.all(
-      names.map(async (name) => {
-        const fileRes = await fetch(`/uploads/${encodeURIComponent(name)}`);
-        if (!fileRes.ok) return null;
-        const blob = await fileRes.blob();
-        return new File([blob], name, { type: "application/pdf" });
-      })
+    const placeholders = names.map(
+      (name) => new File([new Blob()], name, { type: "application/pdf" })
     );
-    const restored = blobs.filter(Boolean);
-    if (!restored.length) return;
-    addFiles(restored, { skipUpload: true, savedNames: names });
+    addFiles(placeholders, {
+      skipUpload: true,
+      savedNames: names,
+      releaseFiles: true,
+    });
     names.forEach((name) => {
       if (isPcFilename(name)) {
         requestPcInfoForFilename(name);
@@ -849,10 +865,14 @@ const createManualFeeItem = () => {
   };
   if (!feeManualMap[selectedGroupKey]) feeManualMap[selectedGroupKey] = [];
   feeManualMap[selectedGroupKey].push(entry);
+  if (typeof window.saveSharedSettings === "function") {
+    window.saveSharedSettings();
+  }
   updateUI();
 };
 
 window.createManualFeeItem = createManualFeeItem;
+window.addFiles = addFiles;
 
 pickBtn.addEventListener("click", () => fileInput.click());
 if (fileListAddBtn) {
@@ -867,9 +887,35 @@ if (feeItemAddBtn) {
   });
 }
 fileInput.addEventListener("change", (e) => {
-  const targetGroupKey = pendingTargetGroupKey;
+  const targetGroupKey = pendingTargetGroupKey || fileInput.dataset.targetGroupKey || null;
+  const targetFeeKey = fileInput.dataset.targetFeeKey || null;
   pendingTargetGroupKey = null;
-  addFiles(e.target.files, targetGroupKey ? { targetGroupKey } : {});
+  fileInput.dataset.targetGroupKey = "";
+  fileInput.dataset.targetFeeKey = "";
+  const added = addFiles(e.target.files, targetGroupKey ? { targetGroupKey } : {});
+  if (targetFeeKey && added && added.length) {
+    const groupFiles = getGroupFiles(targetGroupKey || selectedGroupKey);
+    groupFiles.forEach((file) => {
+      if (file.feeKey === targetFeeKey) file.feeKey = null;
+    });
+    const target = groupFiles.find((file) => file.id === added[0].id);
+    if (target) {
+      target.feeKey = targetFeeKey;
+      if (!feeAttachmentMap[targetGroupKey || selectedGroupKey]) {
+        feeAttachmentMap[targetGroupKey || selectedGroupKey] = {};
+      }
+      const attachments = feeAttachmentMap[targetGroupKey || selectedGroupKey];
+      Object.keys(attachments).forEach((name) => {
+        if (attachments[name] === targetFeeKey) delete attachments[name];
+      });
+      const name = target.uploadName || target.name;
+      if (name) attachments[name] = targetFeeKey;
+      if (typeof window.saveSharedSettings === "function") {
+        window.saveSharedSettings();
+      }
+    }
+    updateUI();
+  }
 });
 folderSearch.addEventListener("input", updateFolderList);
 
@@ -1027,6 +1073,14 @@ const loadSharedSettings = async () => {
 
 const saveSharedSettings = async () => {
   try {
+    const feeHiddenSerialized = {};
+    Object.entries(feeHiddenMap || {}).forEach(([key, value]) => {
+      if (value instanceof Set) {
+        feeHiddenSerialized[key] = Array.from(value);
+      } else if (Array.isArray(value)) {
+        feeHiddenSerialized[key] = value;
+      }
+    });
     await fetch("/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1034,6 +1088,12 @@ const saveSharedSettings = async () => {
         prefixOrder,
         customsOnlyFirst,
         completedGroups,
+        feeOrderMap,
+        feeHiddenMap: feeHiddenSerialized,
+        feeManualMap,
+        feeOverrideMap,
+        listOrderMap,
+        feeAttachmentMap,
       }),
     });
   } catch (err) {
@@ -1041,7 +1101,19 @@ const saveSharedSettings = async () => {
   }
 };
 
+const requestSaveSharedSettings = (() => {
+  let timer = null;
+  return () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      saveSharedSettings();
+    }, 400);
+  };
+})();
+
 window.saveSharedSettings = saveSharedSettings;
+window.requestSaveSharedSettings = requestSaveSharedSettings;
 
 const initApp = async () => {
   await loadSharedSettings();
