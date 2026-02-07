@@ -6,6 +6,11 @@ from pathlib import Path
 import json
 import re
 import tempfile
+import threading
+import sys
+import subprocess
+import os
+import time
 
 app = Flask(__name__, static_folder="../public", static_url_path="")
 app.config["MAX_FORM_MEMORY_SIZE"] = 4 * 1024 * 1024
@@ -14,6 +19,8 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 UPLOAD_DIR = ROOT_DIR / "uploads"
 MERGED_DIR = ROOT_DIR / "merged"
 SETTINGS_FILE = ROOT_DIR / "settings.json"
+UPDATE_ZIP = ROOT_DIR / "update.zip"
+UPDATER_SCRIPT = ROOT_DIR / "scripts" / "app_updater.py"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MERGED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -156,6 +163,29 @@ def get_pc_info(filename):
     except Exception:
         return jsonify({"error": "PDF 정보를 읽지 못했습니다."}), 500
     return jsonify(info)
+
+
+@app.post("/update")
+def run_update():
+    if not UPDATE_ZIP.exists():
+        return jsonify({"error": "update.zip 파일을 찾을 수 없습니다."}), 404
+    if not UPDATER_SCRIPT.exists():
+        return jsonify({"error": "업데이트 스크립트가 없습니다."}), 500
+
+    try:
+        subprocess.Popen(
+            [sys.executable, str(UPDATER_SCRIPT), str(ROOT_DIR), str(UPDATE_ZIP), str(os.getpid())],
+            cwd=str(ROOT_DIR),
+        )
+    except Exception:
+        return jsonify({"error": "업데이트 실행에 실패했습니다."}), 500
+
+    def _delayed_exit():
+        time.sleep(0.6)
+        os._exit(0)
+
+    threading.Thread(target=_delayed_exit, daemon=True).start()
+    return jsonify({"status": "ok"})
 
 
 @app.get("/merged")

@@ -1003,6 +1003,29 @@ if (settingsMenu) {
       }
       return;
     }
+    if (actionButton && actionButton.dataset.action === "update") {
+      closeSettingsMenu();
+      const confirmed = window.confirm(
+        "업데이트를 실행할까요? 실행 중인 프로그램이 종료된 뒤 업데이트가 적용됩니다."
+      );
+      if (!confirmed) return;
+      setStatus("업데이트를 시작합니다. 잠시 후 프로그램이 종료됩니다.");
+      fetch("/update", { method: "POST" })
+        .then(async (res) => {
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || "업데이트 실행 실패");
+          }
+          return res.json();
+        })
+        .then(() => {
+          setStatus("업데이트 준비 완료. 프로그램이 종료되면 자동 적용됩니다.");
+        })
+        .catch((err) => {
+          setStatus(err.message || "업데이트 실행에 실패했습니다.");
+        });
+      return;
+    }
     const target = targetButton.dataset.target;
     closeSettingsMenu();
     if (target === "order") {
